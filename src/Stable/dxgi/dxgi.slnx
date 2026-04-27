@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/Solution Items/" />
+  <Project Path="dxgi/dxgi.vcxproj" Id="bf595e11-ebb2-4473-8dd4-2b26382ab4e1" />
+</Solution>
