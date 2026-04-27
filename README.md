@@ -11,7 +11,7 @@ When you select the **U FM** station, the in-game radio controls (Play, Pause, S
 
 ## 📦 Instructions
 1.  **Download:** Get the latest `YOUFMRadio.zip` from [Releases](https://github.com/sorooshcraft/You-FM/releases).
-2.  **PitCrew:** Install the `.zip` as a mod using [PitCrew](https://github.com/Telonof/PitCrew).
+2.  **PitCrew:** Install the `.zip` as a mod using [PitCrew](https://github.com/Telonof/PitCrew). If you have installed other custom radios, ensure this is the first (after Brokemogul)
 3.  **DLL Install:** Copy the `dxgi.dll` from the download and paste it into your **The Crew** game folder (next to `TheCrew.exe`).
 
 > [!NOTE]
