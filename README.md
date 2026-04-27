@@ -1,10 +1,10 @@
 # 📻 YouFM
-**Control your Windows Media (Spotify, YouTube, etc.) through "The Crew" in-game radio.**
+**Control your Windows Media (Spotify, YouTube, etc.) through The Crew's in-game radio.**
 
-YouFM adds a custom radio station called **U FM** to the radio. It hooks the game's native UI buttons directly to your Windows media session, letting you control your music without leaving the driver's seat.
+YouFM adds a custom radio station called **YOU FM** to the radio. It hooks the game's native UI buttons directly to your Windows media session, letting you control your music without leaving the driver's seat.
 
 ## 🔍 What does it do?
-When you select the **U FM** station, the in-game radio controls (Play, Pause, Skip, Backtrack) act as media keys for your PC.
+When you select the **YOU FM** station, the in-game radio controls (Play, Pause, Skip, Backtrack) act as media keys for your PC.
 *   **Integrated Control:** Works with any app that supports Windows Media Sessions (Spotify, Web Browsers, VLC, etc.).
 *   **No Alt-Tabbing:** Keep your focus on the road while switching tracks.
 *   **Silent Sync:** Uses a dummy playlist logic to ensure game music doesn't overlap with your external audio.
