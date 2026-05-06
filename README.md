@@ -18,7 +18,7 @@ When you select the **YOU FM** station, the in-game radio controls (Play, Pause,
 > **Experimental POC:** There is a version of `dxgi.dll` in the `/unstable` folder. This version is a **Proof of Concept** that attempts to show the Track/Artist name in the game GUI. It is currently unstable and will crash the game within 2–15 minutes. **Use the main release for a stable experience.**
 
 ## 💎 Credits
-*   **TuneinCrew ([Telonof](https://github.com/Telonof/TuneinCrew)):** The playlist creator tool! YouFM uses a silent dummy playlist created with this tool to enable the in-game radio GUI logic. 🤝
+*   **TuneinCrew ([Telonof](https://github.com/Telonof/TuneinCrew)):** The playlist creator tool! YouFM uses a silent dummy playlist created with this tool to enable the in-game radio GUI logic. Also appreciate the help on repacking the gui files. 🤝
 
 ## ⚖️ License
 Following the requirements of the tools used in this project, YouFM is licensed under **GPL-3.0**. See the `LICENSE` file for details.
