@@ -2,14 +2,12 @@
 #include <Windows.h>
 #include <cstdint>
 #include <cstring>
-#include <atomic>
+#include <cstdlib>
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Media.Control.h>
 
 #pragma comment(lib, "windowsapp")
-#pragma comment(lib, "User32.lib")
-
 #pragma comment(linker, "/export:CreateDXGIFactory=C:\\Windows\\System32\\dxgi.CreateDXGIFactory")
 #pragma comment(linker, "/export:CreateDXGIFactory1=C:\\Windows\\System32\\dxgi.CreateDXGIFactory1")
 #pragma comment(linker, "/export:CreateDXGIFactory2=C:\\Windows\\System32\\dxgi.CreateDXGIFactory2")
@@ -18,176 +16,112 @@
 
 using namespace winrt::Windows::Media::Control;
 
-namespace Config {
-    constexpr size_t QUEUE_BUFFER_SIZE = 1024;
-    constexpr uintptr_t FS_COMMAND_OFFSETS[] = {
-        0x764BC0,
-        0x766910
-    };
-    constexpr int TARGET_STATION_ID = 7;
-}
+constexpr int TARGET_STATION_ID = 7;
+constexpr uintptr_t FS_COMMAND_OFFSETS[] = { 0x764BC0, 0x766910 };
 
-struct QueueEntry {
-    char command[256];
-    std::atomic<bool> ready{ false };
-};
-
-namespace State {
-    QueueEntry cmdQueue[Config::QUEUE_BUFFER_SIZE];
-    std::atomic<long> writeIndex{ 0 };
-    std::atomic<long> readIndex{ 0 };
-    std::atomic<long> currentStation{ -1 };
-    std::atomic<long> lastStation{ -1 };
-}
-
-typedef void* (__fastcall* tFsCommand)(void* handler, void* movieView, const char* command, const char* args);
+using tFsCommand = void* (__fastcall*)(void* handler, void* movieView, const char* command, const char* args);
 tFsCommand oFsCommand = nullptr;
 
-void SendMediaKey(WORD vkey) {
-    INPUT input[2] = {};
-    input[0].type = INPUT_KEYBOARD;
-    input[0].ki.wVk = vkey;
-    input[1] = input[0];
-    input[1].ki.dwFlags = KEYEVENTF_KEYUP;
-    SendInput(2, input, sizeof(INPUT));
-}
+static GlobalSystemMediaTransportControlsSessionManager g_mediaManager{ nullptr };
+static int g_currentStation = -1;
 
-DWORD WINAPI MediaControlThread(LPVOID lpReserved) {
-    winrt::init_apartment();
-    while (true) {
+void HandleStationChange(int newStation) {
+    if (newStation == g_currentStation) return;
+
+    if (g_mediaManager) {
         try {
-            auto manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().get();
-            auto session = manager.GetCurrentSession();
-
-            if (session) {
-                long current = State::currentStation.load();
-                auto status = session.GetPlaybackInfo().PlaybackStatus();
-
-                if (current != State::lastStation.load()) {
-                    if (current == Config::TARGET_STATION_ID) {
-                        session.TryPlayAsync();
-                    }
-                    else if (current != -1) {
-                        session.TryPauseAsync();
-                    }
-                    State::lastStation.store(current);
-                }
-
-                if (current != Config::TARGET_STATION_ID && current != -1) {
-                    if (status == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing) {
-                        session.TryPauseAsync();
-                    }
+            if (auto session = g_mediaManager.GetCurrentSession()) {
+                if (newStation == TARGET_STATION_ID) {
+                    session.TryPlayAsync();
+                } else if (g_currentStation == TARGET_STATION_ID) {
+                    session.TryPauseAsync();
                 }
             }
-        }
-        catch (...) {
-        }
-        Sleep(500);
+        } catch (...) {}
     }
-    return 0;
+    g_currentStation = newStation;
+}
+
+void HandleMediaControl(char action) {
+    if (!g_mediaManager || g_currentStation != TARGET_STATION_ID) return;
+
+    try {
+        if (auto session = g_mediaManager.GetCurrentSession()) {
+            switch (action) {
+                case '0': session.TrySkipPreviousAsync();    break;
+                case '1': session.TryTogglePlayPauseAsync(); break;
+                case '3': session.TrySkipNextAsync();        break;
+            }
+        }
+    } catch (...) {}
 }
 
 void* __fastcall hkFsCommand(void* handler, void* movieView, const char* command, const char* args) {
     if (command && (uintptr_t)command > 0x10000) {
         if (strstr(command, "STATION_UPDATE")) {
-            for (int i = 0; command[i]; i++) {
-                if (command[i] >= '0' && command[i] <= '9') {
-                    State::currentStation.store(static_cast<long>(atoi(&command[i])));
-                    break;
-                }
+            const char* numPtr = (args && *args) ? args : strpbrk(command, "0123456789");
+            if (numPtr) {
+                HandleStationChange(atoi(numPtr));
             }
-        }
-        else if (strstr(command, "SP_")) {
-            long idx = State::writeIndex.fetch_add(1) % Config::QUEUE_BUFFER_SIZE;
-            strcpy_s(State::cmdQueue[idx].command, command);
-            State::cmdQueue[idx].ready.store(true);
+        } 
+        else if (const char* sp = strstr(command, "SP_")) {
+            HandleMediaControl(sp[3]);
         }
     }
     return oFsCommand(handler, movieView, command, args);
 }
 
-int ApplyVTableHook(uintptr_t moduleBase, uintptr_t targetFn, PVOID hookFn) {
-    int hookCount = 0;
-    PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)moduleBase;
-    PIMAGE_NT_HEADERS ntHeaders = (PIMAGE_NT_HEADERS)(moduleBase + dosHeader->e_lfanew);
-    PIMAGE_SECTION_HEADER section = IMAGE_FIRST_SECTION(ntHeaders);
+bool ApplyVTableHook(uintptr_t moduleBase, uintptr_t targetFn, void* hookFn) {
+    auto dosHeader = reinterpret_cast<PIMAGE_DOS_HEADER>(moduleBase);
+    auto ntHeaders = reinterpret_cast<PIMAGE_NT_HEADERS>(moduleBase + dosHeader->e_lfanew);
+    auto section = IMAGE_FIRST_SECTION(ntHeaders);
 
+    bool hooked = false;
     for (WORD i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++, section++) {
-        if (memcmp(section->Name, ".rdata", 6) == 0 || memcmp(section->Name, ".data", 5) == 0) {
-            uintptr_t start = moduleBase + section->VirtualAddress;
-            uintptr_t end = start + section->Misc.VirtualSize;
+        if (memcmp(section->Name, ".rdata", 6) != 0 && memcmp(section->Name, ".data", 5) != 0)
+            continue;
 
-            for (uintptr_t p = start; p < end - sizeof(uintptr_t); p += sizeof(uintptr_t)) {
-                uintptr_t* ptr = reinterpret_cast<uintptr_t*>(p);
-                if (*ptr == targetFn) {
-                    DWORD oldProtect;
-                    if (VirtualProtect(ptr, sizeof(uintptr_t), PAGE_READWRITE, &oldProtect)) {
-                        *ptr = reinterpret_cast<uintptr_t>(hookFn);
-                        VirtualProtect(ptr, sizeof(uintptr_t), oldProtect, &oldProtect);
-                        hookCount++;
-                    }
+        auto* start = reinterpret_cast<uintptr_t*>(moduleBase + section->VirtualAddress);
+        auto* end = reinterpret_cast<uintptr_t*>(moduleBase + section->VirtualAddress + section->Misc.VirtualSize);
+
+        for (uintptr_t* ptr = start; ptr < end; ++ptr) {
+            if (*ptr == targetFn) {
+                DWORD oldProtect;
+                if (VirtualProtect(ptr, sizeof(uintptr_t), PAGE_READWRITE, &oldProtect)) {
+                    *ptr = reinterpret_cast<uintptr_t>(hookFn);
+                    VirtualProtect(ptr, sizeof(uintptr_t), oldProtect, &oldProtect);
+                    hooked = true;
                 }
             }
         }
     }
-    return hookCount;
+    return hooked;
 }
 
-DWORD WINAPI EventProcessorThread(LPVOID lpReserved) {
-    while (true) {
-        while (State::readIndex.load() < State::writeIndex.load()) {
-            long idx = State::readIndex.load() % Config::QUEUE_BUFFER_SIZE;
-
-            if (State::cmdQueue[idx].ready.exchange(false)) {
-                const char* found = strstr(State::cmdQueue[idx].command, "SP_");
-                if (found && State::currentStation.load() == Config::TARGET_STATION_ID) {
-                    char action = found[3];
-                    switch (action) {
-                    case '0': SendMediaKey(VK_MEDIA_PREV_TRACK); break;
-                    case '1': SendMediaKey(VK_MEDIA_PLAY_PAUSE); break;
-                    case '3': SendMediaKey(VK_MEDIA_NEXT_TRACK); break;
-                    }
-                }
-                State::readIndex.fetch_add(1);
-            }
-            else {
-                break;
-            }
-        }
-        Sleep(10);
-    }
-    return 0;
-}
-
-DWORD WINAPI MainThread(LPVOID lpReserved) {
+DWORD WINAPI InitThread(LPVOID) {
     uintptr_t moduleBase = 0;
-    while ((moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleA(NULL))) == 0) {
+    while (!(moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleA(nullptr)))) {
         Sleep(100);
     }
 
-    Sleep(3000);
+    try {
+        winrt::init_apartment();
+        g_mediaManager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().get();
+    } catch (...) {}
 
-    int fsHooks = 0;
-    for (uintptr_t offset : Config::FS_COMMAND_OFFSETS) {
+    for (uintptr_t offset : FS_COMMAND_OFFSETS) {
         oFsCommand = reinterpret_cast<tFsCommand>(moduleBase + offset);
-        fsHooks = ApplyVTableHook(moduleBase, reinterpret_cast<uintptr_t>(oFsCommand), hkFsCommand);
-        if (fsHooks > 0) {
+        if (ApplyVTableHook(moduleBase, reinterpret_cast<uintptr_t>(oFsCommand), reinterpret_cast<void*>(hkFsCommand))) {
             break;
         }
     }
-
-    if (fsHooks > 0) {
-        CreateThread(nullptr, 0, EventProcessorThread, nullptr, 0, nullptr);
-        CreateThread(nullptr, 0, MediaControlThread, nullptr, 0, nullptr);
-    }
-
     return 0;
 }
 
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
-    if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hModule);
-        HANDLE hThread = CreateThread(nullptr, 0, MainThread, hModule, 0, nullptr);
+        HANDLE hThread = CreateThread(nullptr, 0, InitThread, nullptr, 0, nullptr);
         if (hThread) CloseHandle(hThread);
     }
     return TRUE;
